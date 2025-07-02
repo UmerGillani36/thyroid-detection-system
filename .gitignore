@@ -1,0 +1,24 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Streamlit temp files and generated PDFs
+*.png
+*.pdf
+
+# DB / sensitive user files
+users.db
+
+# VSCode settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
