@@ -11,22 +11,22 @@ from tf_keras_vis.gradcam import Gradcam
 from tf_keras_vis.utils.scores import BinaryScore
 from tf_keras_vis.utils.model_modifiers import ReplaceToLinear
 import io
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import google.generativeai as genai
+
+# --- Load Gemini API Key ---
 load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=GOOGLE_API_KEY)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+# Initialize Gemini model
+model_gemini = genai.GenerativeModel('gemini-2.0-flash')
 
 # --- App Setup ---
 if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
     st.warning("Please login first.")
     st.stop()
-
-# col1, col2, col3 = st.columns([1, 2, 1])
-# with col2:
-#     st.image("logo.jpg", width=200)
 
 st.markdown(
     "<h1 style='text-align: center; font-size: 32px; font-weight: bold;'>"
@@ -75,21 +75,20 @@ def generate_gradcam_heatmap(model, image_tensor):
 def generate_diet_plan(prediction: str):
     prompt = f"""
     Act as a certified medical nutritionist. A patient has been diagnosed with '{prediction}' thyroid condition.
-    Give a personalized 3-day diet plan including:
-    - Breakfast, lunch, dinner, snacks
-    - Focus on foods that support or manage {prediction}
-    - Explain each day in simple language
+    Create a personalized 3-day diet plan including:
+    - Breakfast, lunch, dinner, and snacks for each day
+    - Focus on foods that support or manage {prediction} thyroid condition
+    - Explain each meal choice in simple language
+    - Include portion sizes and preparation tips
+    - Highlight key nutrients that benefit thyroid health
     """
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a diet expert."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=800
-    )
-    return response.choices[0].message.content
+    
+    try:
+        response = model_gemini.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"Error generating diet plan: {str(e)}")
+        return "Could not generate diet plan at this time. Please try again later."
 
 
 # --- Form UI ---
@@ -129,20 +128,16 @@ if predict_btn and uploaded_image:
         gradcam_buf = generate_gradcam_heatmap(model, x)
         st.session_state["gradcam_buf"] = gradcam_buf
 
-
-
-    # st.write("🔍 Probabilities:", {
-    #     "Benign": f"{(1 - prob):.2%}",
-    #     "Malignant": f"{prob:.2%}"
-    # })
     st.success(f"🩺 Diagnosis: **{prediction}** ({confidence:.2%} confidence)")
     st.subheader("📊 Model Explanation (Grad-CAM)")
     st.image(gradcam_buf, caption="Grad-CAM: What part of the image influenced the decision", use_column_width=True)
+    
     if prediction:
         st.subheader("🍽️ AI-Generated Diet Plan")
         with st.spinner("Creating personalized diet..."):
             diet_plan = generate_diet_plan(prediction)
             st.markdown(diet_plan)
+    
     st.session_state["last_prediction"] = {
         "name": name,
         "age": age,
@@ -152,7 +147,8 @@ if predict_btn and uploaded_image:
         "symptoms": ", ".join(symptoms),
         "date": date.strftime('%Y-%m-%d'),
         "diagnosis": prediction,
-        "confidence": f"{confidence:.2%}"
+        "confidence": f"{confidence:.2%}",
+        "diet_plan": diet_plan
     }
 
 # --- Generate PDF Logic ---
@@ -172,21 +168,25 @@ if generate_pdf:
         pdf.ln(10)
 
         for k, v in data.items():
-            pdf.cell(200, 10, txt=f"{k.capitalize()}: {v}", ln=True)
+            if k != "diet_plan":  # Handle diet plan separately
+                pdf.cell(200, 10, txt=f"{k.capitalize()}: {v}", ln=True)
         
         pdf.ln(5)
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(200, 10, txt="Model Explanation (Grad-CAM):", ln=True)
+        
         # Add Grad-CAM image to PDF
         gradcam_path = "gradcam_temp.png"
-
         with open(gradcam_path, "wb") as f:
             f.write(gradcam_buf.getbuffer())
-        
-        pdf.multi_cell(0, 10, f"Diet Plan:\n{diet_plan}")
-        # Add Grad-CAM image
         pdf.image(gradcam_path, x=30, y=None, w=140)  # Centered width
+        
+        # Add Diet Plan
         pdf.ln(10)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Diet Plan:", ln=True)
+        pdf.set_font("Arial", size=11)
+        pdf.multi_cell(0, 7, data["diet_plan"])
 
         filename = f"Thyroid_Report_{data['name'].replace(' ', '_')}_{data['date'].replace('-', '')}.pdf"
         pdf.output(filename)
@@ -194,4 +194,3 @@ if generate_pdf:
         st.success(f"✅ PDF Generated: {filename}")
         with open(filename, "rb") as f:
             st.download_button("📥 Download PDF", f, file_name=filename)
-
