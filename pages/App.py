@@ -11,7 +11,12 @@ from tf_keras_vis.gradcam import Gradcam
 from tf_keras_vis.utils.scores import BinaryScore
 from tf_keras_vis.utils.model_modifiers import ReplaceToLinear
 import io
-import base64
+from openai import OpenAI
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 # --- App Setup ---
@@ -67,6 +72,26 @@ def generate_gradcam_heatmap(model, image_tensor):
     plt.close()
     return buf
 
+def generate_diet_plan(prediction: str):
+    prompt = f"""
+    Act as a certified medical nutritionist. A patient has been diagnosed with '{prediction}' thyroid condition.
+    Give a personalized 3-day diet plan including:
+    - Breakfast, lunch, dinner, snacks
+    - Focus on foods that support or manage {prediction}
+    - Explain each day in simple language
+    """
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a diet expert."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7,
+        max_tokens=800
+    )
+    return response.choices[0].message.content
+
+
 # --- Form UI ---
 st.subheader("👤 Patient Details")
 
@@ -113,6 +138,11 @@ if predict_btn and uploaded_image:
     st.success(f"🩺 Diagnosis: **{prediction}** ({confidence:.2%} confidence)")
     st.subheader("📊 Model Explanation (Grad-CAM)")
     st.image(gradcam_buf, caption="Grad-CAM: What part of the image influenced the decision", use_column_width=True)
+    if prediction:
+        st.subheader("🍽️ AI-Generated Diet Plan")
+        with st.spinner("Creating personalized diet..."):
+            diet_plan = generate_diet_plan(prediction)
+            st.markdown(diet_plan)
     st.session_state["last_prediction"] = {
         "name": name,
         "age": age,
@@ -152,7 +182,8 @@ if generate_pdf:
 
         with open(gradcam_path, "wb") as f:
             f.write(gradcam_buf.getbuffer())
-
+        
+        pdf.multi_cell(0, 10, f"Diet Plan:\n{diet_plan}")
         # Add Grad-CAM image
         pdf.image(gradcam_path, x=30, y=None, w=140)  # Centered width
         pdf.ln(10)
